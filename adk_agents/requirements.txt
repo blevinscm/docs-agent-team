@@ -1,0 +1,2 @@
+google_adk
+# Add any other dependencies your agent needs
