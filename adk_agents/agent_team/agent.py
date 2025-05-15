@@ -9,13 +9,21 @@ import asyncio
 from google.adk.agents import Agent
 from google.adk.sessions import InMemorySessionService
 from google.adk.runners import Runner
-from google.genai import types # For creating message Content/Parts
+from google.genai import types
+from google import genai
+import base64 # For creating message Content/Parts
+from google.genai import Client
+from google.adk.tools import ToolContext
+from google.adk.tools import load_artifacts
+
+
 
 
 import warnings
 # Ignore all warnings
 warnings.filterwarnings("ignore")
 
+#client = Client()
 
 # @title Define the get_weather Tool
 def get_weather(city: str) -> dict:
@@ -77,8 +85,84 @@ def say_goodbye() -> str:
    print(f"--- Tool: say_goodbye called ---")
    return "Goodbye! Have a great day."
 
+async def generate_text(user_prompt: str, tool_context: 'ToolContext'):
+    """Generates text based on the user_prompt."""
 
-# @title Define Greeting and Farewell Sub-Agents
+    print(f"--- Tool: generate_text called ---")
+    client = genai.Client(
+        vertexai=True,
+        project="genai-docs-project",
+        location="us-central1",
+    )
+    model = "gemini-2.0-flash-001"
+    
+    si_text = f""" You are a technical writer specializing in Google Cloud documentation. 
+              Your task is to generate documentation for Google Cloud services, adhering strictly to the Google Cloud style guide. """
+
+    prompt_template = f"""
+        Generate documentation for Google Cloud services, ensuring it aligns with the Google Cloud style guide available at: https://cloud.google.com/vertex-ai/generative-ai/docs/overview.
+
+        Follow these guidelines:
+
+        1.  **Refer to the Style Guide:**
+            *   Thoroughly review the Google Cloud style guide to understand the required tone, formatting, and content guidelines.
+            *   Pay close attention to sections on voice and tone, terminology, code samples, and formatting.
+        2.  **Adapt the Tone:**
+            *   Maintain a clear, concise, and professional tone.
+            *   Use active voice and avoid jargon unless necessary.
+        3.  **Follow Formatting Guidelines:**
+            *   Use appropriate headings, subheadings, and bullet points to organize content.
+            *   Ensure code samples are properly formatted and syntax-highlighted.
+        4.  **Use Terminology Correctly:**
+            *   Adhere to the terminology and naming conventions specified in the style guide.
+            *   Use consistent terminology throughout the documentation.
+        5.  **Provide Clear Examples:**
+            *   Include practical examples and use cases to illustrate concepts.
+            *   Ensure examples are accurate and up-to-date.
+        6.  **Review and Revise:**
+            *   Carefully review the generated documentation for accuracy, clarity, and adherence to the style guide.
+            *   Revise as needed to meet the required standards.
+                Please analyze the following request and provide a clear, direct answer:
+
+        User Request: "{user_prompt}"
+
+        Your concise answer:
+        """
+    contents = [
+        types.Content(
+        role="user",
+        parts=[
+            types.Part.from_text(text=prompt_template)
+        ]
+        ),
+    ]
+
+
+    generate_content_config = types.GenerateContentConfig(
+        temperature = 1,
+        top_p = 1,
+        max_output_tokens = 8192,
+        safety_settings = [types.SafetySetting(
+        category="HARM_CATEGORY_HATE_SPEECH",
+        threshold="OFF"
+        ),types.SafetySetting(
+        category="HARM_CATEGORY_DANGEROUS_CONTENT",
+        threshold="OFF"
+        ),types.SafetySetting(
+        category="HARM_CATEGORY_SEXUALLY_EXPLICIT",
+        threshold="OFF"
+        ),types.SafetySetting(
+        category="HARM_CATEGORY_HARASSMENT",
+        threshold="OFF"
+        )],
+         system_instruction=[types.Part.from_text(text=si_text)
+    ],
+    )
+    response = client.models.generate_content(
+    model=model,
+    contents=contents,
+    )
+    return (response.text)
 
 
 
@@ -100,7 +184,6 @@ greeting_agent = Agent(
 
 
 
-
 # --- Farewell Agent ---
 farewell_agent = Agent(
    # Can use the same or a different model
@@ -115,21 +198,38 @@ farewell_agent = Agent(
    tools=[say_goodbye],
 )
  
+ # --- Docs Generator Agent ---
+generation_agent = Agent(
+   # Can use the same or a different model
+   model = "gemini-2.0-flash",
+   # model=LiteLlm(model=MODEL_GPT_4O), # If you would like to experiment with other models
+   name="generation_agent",
+   instruction="You are the documentation generation  Agent. Your task is to provide documentation for a specified issue. "
+               "Use the 'generate_text' tool when the user indicates they want documentation or docs for a specified issue. "
+               "Do not perform any other actions.",
+   description="Generates documents using the 'generate_text' tool.", # Crucial for delegation
+   tools=[generate_text, load_artifacts],
+)
 
    # @title Define the Root Agent with Sub-Agents
 
 root_agent = Agent(
-   name="weather_agent_v2", # Give it a new version name
+   name="infoport_agent_v2", # Give it a new version name
    model="gemini-2.0-flash",
-   description="The main coordinator agent. Handles weather requests and delegates greetings/farewells to specialists.",
-   instruction="You are the main Weather Agent coordinating a team. Your primary responsibility is to provide weather information. "
+   description="The main coordinator agent. Handles github issues requests and delegates greetings/farewells/generation and evlauation to specialists.",
+   instruction="You are the main Supervisor Agent coordinating a team. Your primary responsibility is to provide weather information. "
                "Use the 'get_weather' tool ONLY for specific weather requests (e.g., 'weather in London'). "
                "You have specialized sub-agents: "
                "1. 'greeting_agent': Handles simple greetings like 'Hi', 'Hello'. Delegate to it for these. "
                "2. 'farewell_agent': Handles simple farewells like 'Bye', 'See you'. Delegate to it for these. "
+               "3. 'generation_agent': Handles generating documentation content for Cloud AI docs. Delegate to it for these. "
                "Analyze the user's query. If it's a greeting, delegate to 'greeting_agent'. If it's a farewell, delegate to 'farewell_agent'. "
+               "If it is a documentation request to create or generate docs, delegate to 'generation_agent'. "
                "If it's a weather request, handle it yourself using 'get_weather'. "
                "For anything else, respond appropriately or state you cannot handle it.",
    tools=[get_weather], # Root agent still needs the weather tool for its core task
    # Key change: Link the sub-agents here!
-   sub_agents=[greeting_agent, farewell_agent]
+   sub_agents=[greeting_agent, farewell_agent, generation_agent]
+)
+
+
