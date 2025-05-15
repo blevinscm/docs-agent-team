@@ -15,6 +15,8 @@ import base64 # For creating message Content/Parts
 from google.genai import Client
 from google.adk.tools import ToolContext
 from google.adk.tools import load_artifacts
+from google.adk.agents import AgentContext
+
 
 
 
@@ -85,22 +87,42 @@ def say_goodbye() -> str:
    print(f"--- Tool: say_goodbye called ---")
    return "Goodbye! Have a great day."
 
-async def generate_text(user_prompt: str, tool_context: 'ToolContext'):
-    """Generates text based on the user_prompt."""
 
-    print(f"--- Tool: generate_text called ---")
+async def generate_text(
+    document_uri: str,
+    document_mime_type: str,
+   # file_part: types.Part = None, # Add this parameter for file input. Default to None.
+    ):
+    """
+    Generates documentation text based on a user prompt and optionally a file input,
+    incorporating system instructions and a prompt template.
+
+    Args:
+        user_prompt (str): The specific query or topic provided by the user.
+        file_part (types.Part, optional): An optional file content provided as types.Part.
+                                        Can be text (e.g., text/plain) or other multimodal data.
+        tool_context (AgentContext): The ADK agent context, providing access to the LLM.
+
+    Returns:
+    """
+
+    print(f"--- Tool: generate_text called : ---")
+    #if file_part:
+     #   print(f"--- Tool: received file: {document_uri} ---")
+
     client = genai.Client(
         vertexai=True,
         project="genai-docs-project",
         location="us-central1",
     )
     model = "gemini-2.0-flash-001"
-    
+
     si_text = f""" You are a technical writer specializing in Google Cloud documentation. 
               Your task is to generate documentation for Google Cloud services, adhering strictly to the Google Cloud style guide. """
 
+
     prompt_template = f"""
-        Generate documentation for Google Cloud services, ensuring it aligns with the Google Cloud style guide available at: https://cloud.google.com/vertex-ai/generative-ai/docs/overview.
+        Generate documentation ensuring it aligns with the Google Cloud style guide available at: https://cloud.google.com/vertex-ai/generative-ai/docs/overview.
 
         Follow these guidelines:
 
@@ -124,17 +146,32 @@ async def generate_text(user_prompt: str, tool_context: 'ToolContext'):
             *   Revise as needed to meet the required standards.
                 Please analyze the following request and provide a clear, direct answer:
 
-        User Request: "{user_prompt}"
+        User Request: "{document_uri}"
 
         Your concise answer:
         """
+    # --- Construct the 'contents' for the LLM call ---
+    # This is the core part for handling multimodal input.
+    # We will build the 'parts' list dynamically.
+    parts_for_llm = [
+        types.Part.from_text(text=prompt_template) # Start with the structured user prompt
+    ]
+
+    # If a file was provided, add it to the parts list
+   # if file_part:
+        # If it's a text file, you might want to explicitly convert it to text for the LLM
+        # by extracting its content, or just pass the part directly for multimodal models.
+        # For Gemini, passing the types.Part directly is the standard way for multimodal input.
+    #    parts_for_llm.append(file_part)
+     #   print(f"--- Appended file_part of type {file_part.mime_type} to LLM contents ---")
+
+    # Now create the final contents list
     contents = [
-        types.Content(
-        role="user",
-        parts=[
-            types.Part.from_text(text=prompt_template)
-        ]
+        types.Part.from_uri(
+            file_uri=document_uri,
+            mime_type=document_mime_type,
         ),
+        types.Part.from_text(text="Make changes as asked in this issue document."),
     ]
 
 
@@ -142,27 +179,28 @@ async def generate_text(user_prompt: str, tool_context: 'ToolContext'):
         temperature = 1,
         top_p = 1,
         max_output_tokens = 8192,
-        safety_settings = [types.SafetySetting(
-        category="HARM_CATEGORY_HATE_SPEECH",
-        threshold="OFF"
-        ),types.SafetySetting(
-        category="HARM_CATEGORY_DANGEROUS_CONTENT",
-        threshold="OFF"
-        ),types.SafetySetting(
-        category="HARM_CATEGORY_SEXUALLY_EXPLICIT",
-        threshold="OFF"
-        ),types.SafetySetting(
-        category="HARM_CATEGORY_HARASSMENT",
-        threshold="OFF"
-        )],
-         system_instruction=[types.Part.from_text(text=si_text)
+        safety_settings = [
+            types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="OFF"),
+            types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="OFF"),
+            types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="OFF"),
+            types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="OFF")
+        ],
+        system_instruction=[types.Part.from_text(text=si_text)
     ],
     )
-    response = client.models.generate_content(
-    model=model,
-    contents=contents,
-    )
-    return (response.text)
+    try:
+        response = client.models.generate_content(
+        model=model,
+        config=generate_content_config,
+        contents=contents,
+        )
+        generated_text = response.text
+        return {"status": "success", "report": generated_text}
+
+    except Exception as e:
+        print(f"Error generating text with file input: {e}")
+        return {"status": "error", "report": f"Failed to generate text from file: {e}"}
+                                              
 
 
 
