@@ -15,53 +15,14 @@ import base64 # For creating message Content/Parts
 from google.genai import Client
 from google.adk.tools import ToolContext
 from google.adk.tools import load_artifacts
-from google.adk.agents import AgentContext
-
-
-
 
 
 import warnings
 # Ignore all warnings
 warnings.filterwarnings("ignore")
 
-#client = Client()
-
-# @title Define the get_weather Tool
-def get_weather(city: str) -> dict:
-   """Retrieves the current weather report for a specified city.
-
-
-   Args:
-       city (str): The name of the city (e.g., "New York", "London", "Tokyo").
-
-
-   Returns:
-       dict: A dictionary containing the weather information.
-             Includes a 'status' key ('success' or 'error').
-             If 'success', includes a 'report' key with weather details.
-             If 'error', includes an 'error_message' key.
-   """
-   print(f"--- Tool: get_weather called for city: {city} ---") # Log tool execution
-   city_normalized = city.lower().replace(" ", "") # Basic normalization
-
-
-   # Mock weather data
-   mock_weather_db = {
-       "newyork": {"status": "success", "report": "The weather in New York is sunny with a temperature of 25°C."},
-       "london": {"status": "success", "report": "It's cloudy in London with a temperature of 15°C."},
-       "tokyo": {"status": "success", "report": "Tokyo is experiencing light rain and a temperature of 18°C."},
-   }
-
-
-   if city_normalized in mock_weather_db:
-       return mock_weather_db[city_normalized]
-   else:
-       return {"status": "error", "error_message": f"Sorry, I don't have weather information for '{city}'."}
-
 
 # @title Define Tools for Greeting and Farewell Agents
-
 
 # Ensure 'get_weather' from Step 1 is available if running this step independently.
 # def get_weather(city: str) -> dict: ... (from Step 1)
@@ -94,16 +55,18 @@ async def generate_text(
    # file_part: types.Part = None, # Add this parameter for file input. Default to None.
     ):
     """
-    Generates documentation text based on a user prompt and optionally a file input,
+    Generates documentation text based on a given document URI,
     incorporating system instructions and a prompt template.
 
     Args:
-        user_prompt (str): The specific query or topic provided by the user.
-        file_part (types.Part, optional): An optional file content provided as types.Part.
-                                        Can be text (e.g., text/plain) or other multimodal data.
-        tool_context (AgentContext): The ADK agent context, providing access to the LLM.
+        document_uri (str): The URI (e.g., a GitHub issue link) of the document to analyze.
+        document_mime_type (str): The MIME type of the document (e.g., "text/html", "text/plain").
+
 
     Returns:
+    dict: A dictionary with a 'status' key ('success' or 'error')
+              and a 'report' key containing the generated documentation text in Markdown format
+              (if successful), or an error message (if unsuccessful).
     """
 
     print(f"--- Tool: generate_text called : ---")
@@ -118,11 +81,11 @@ async def generate_text(
     model = "gemini-2.0-flash-001"
 
     si_text = f""" You are a technical writer specializing in Google Cloud documentation. 
-              Your task is to generate documentation for Google Cloud services, adhering strictly to the Google Cloud style guide. """
+              Your task is to generate documentation for Google Cloud services.  """
 
 
     prompt_template = f"""
-        Generate documentation ensuring it aligns with the Google Cloud style guide available at: https://cloud.google.com/vertex-ai/generative-ai/docs/overview.
+        Look at the Github issue link, analyze the change request and adapt or create content that matches the document style and tone. 
 
         Follow these guidelines:
 
@@ -156,14 +119,6 @@ async def generate_text(
     parts_for_llm = [
         types.Part.from_text(text=prompt_template) # Start with the structured user prompt
     ]
-
-    # If a file was provided, add it to the parts list
-   # if file_part:
-        # If it's a text file, you might want to explicitly convert it to text for the LLM
-        # by extracting its content, or just pass the part directly for multimodal models.
-        # For Gemini, passing the types.Part directly is the standard way for multimodal input.
-    #    parts_for_llm.append(file_part)
-     #   print(f"--- Appended file_part of type {file_part.mime_type} to LLM contents ---")
 
     # Now create the final contents list
     contents = [
@@ -200,8 +155,127 @@ async def generate_text(
     except Exception as e:
         print(f"Error generating text with file input: {e}")
         return {"status": "error", "report": f"Failed to generate text from file: {e}"}
-                                              
 
+
+  
+async def evaluate_text(
+    document_uri: str,
+    document_mime_type: str,
+   # file_part: types.Part = None, # Add this parameter for file input. Default to None.
+    ):
+    """
+    Evaluates documentation text based on a given document URI,
+    incorporating system instructions and a prompt template for evaluation criteria.
+
+    Args:
+        document_uri (str): The URI (e.g., a GitHub issue link or a document URL)
+                            of the document to be evaluated.
+        document_mime_type (str): The MIME type of the document (e.g., "text/html", "text/plain").
+
+    Returns:
+        dict: A dictionary with a 'status' key ('success' or 'error')
+              and a 'report' key containing the evaluation results (e.g., feedback,
+              score, or identified issues) in a structured or Markdown format,
+              or an error message if the evaluation was unsuccessful.
+    """
+
+    print(f"--- Tool: evaluate_text called : ---")
+    #if file_part:
+     #   print(f"--- Tool: received file: {document_uri} ---")
+
+    client = genai.Client(
+        vertexai=True,
+        project="genai-docs-project",
+        location="us-central1",
+    )
+    model = "gemini-2.0-flash-001"
+
+    si_text = f""" You are an expert documentation evaluator for Google Cloud. 
+              Your task is to thoroughly review and assess the quality, accuracy, clarity, and adherence to style guidelines of the provided documentation. 
+              Identify areas for improvement and provide constructive feedback. """
+
+
+    prompt_template = f"""
+      **Documentation Evaluation Request:**
+
+        Your task is to act as a highly critical and thorough documentation evaluator for Google Cloud. You will be provided with documentation content. Analyze this content meticulously based on the following criteria:
+
+        1.  **Technical Accuracy & Groundedness:**
+            * Is the information factually correct and up-to-date?
+            * Are all technical concepts explained accurately?
+            * Are code samples, commands, and configurations correct and executable?
+            * Does it align with current product features and behavior?
+
+        2.  **Clarity & Conciseness:**
+            * Is the language clear, unambiguous, and easy to understand for the target audience (developers, data scientists, ML engineers)?
+            * Are sentences and paragraphs concise?
+            * Is jargon avoided or clearly explained?
+
+        3.  **Completeness & Comprehensiveness:**
+            * Does the document cover the topic adequately?
+            * Are there any obvious information gaps or missing steps?
+            * Are prerequisites, limitations, and potential edge cases addressed?
+
+        4.  **Adherence to Style Guide & Tone:**
+            * Does the content follow the Google Cloud style guide for voice, tone (e.g., clear, concise, professional, active voice)?
+            * Is terminology used consistently and correctly (e.g., product names, feature names)?
+            * Are formatting guidelines (headings, lists, code blocks) correctly applied?
+            * Are there any typos, grammatical errors, or awkward phrasing?
+
+        5.  **User Experience & Navigability (if applicable to content):**
+            * Is the content logically structured and easy to navigate?
+            * Are cross-references and internal links accurate and helpful?
+
+        **Instructions:**
+
+        Provide your evaluation in a clear, structured report. For each criterion, briefly state if it passes or fails and provide specific, actionable feedback or identified issues, referencing specific parts of the provided document where possible. If the document passes all criteria, state that it is approved.
+        User Request: "{document_uri}"
+
+        Your concise answer:
+        """
+        
+    # --- Construct the 'contents' for the LLM call ---
+    # This is the core part for handling multimodal input.
+    # We will build the 'parts' list dynamically.
+    parts_for_llm = [
+        types.Part.from_text(text=prompt_template) # Start with the structured user prompt
+    ]
+
+    # Now create the final contents list
+    contents = [
+        types.Part.from_uri(
+            file_uri=document_uri,
+            mime_type=document_mime_type,
+        ),
+        types.Part.from_text(text="Make changes as asked in this issue document."),
+    ]
+
+
+    evaluate_content_config = types.GenerateContentConfig(
+        temperature = 1,
+        top_p = 1,
+        max_output_tokens = 8192,
+        safety_settings = [
+            types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="OFF"),
+            types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="OFF"),
+            types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="OFF"),
+            types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="OFF")
+        ],
+        system_instruction=[types.Part.from_text(text=si_text)
+    ],
+    )
+    try:
+        response = client.models.generate_content(
+        model=model,
+        config=evaluate_content_config,
+        contents=contents,
+        )
+        evaluated_text = response.text
+        return {"status": "success", "report": evaluated_text}
+
+    except Exception as e:
+        print(f"Error generating text with file input: {e}")
+        return {"status": "error", "report": f"Failed to evaluate text from file: {e}"}   
 
 
 
@@ -209,7 +283,6 @@ async def generate_text(
 greeting_agent = Agent(
    # Using a potentially different/cheaper model for a simple task
    model = "gemini-2.0-flash",
-   # model=LiteLlm(model=MODEL_GPT_4O), # If you would like to experiment with other models
    name="greeting_agent",
    instruction="You are the Greeting Agent. Your ONLY task is to provide a friendly greeting to the user. "
                "Use the 'say_hello' tool to generate the greeting. "
@@ -218,15 +291,12 @@ greeting_agent = Agent(
    description="Handles simple greetings and hellos using the 'say_hello' tool.", # Crucial for delegation
    tools=[say_hello],
 )
-#print(f"✅ Agent '{greeting_agent.name}' created using model '{greeting_agent.model}'.")
-
 
 
 # --- Farewell Agent ---
 farewell_agent = Agent(
    # Can use the same or a different model
    model = "gemini-2.0-flash",
-   # model=LiteLlm(model=MODEL_GPT_4O), # If you would like to experiment with other models
    name="farewell_agent",
    instruction="You are the Farewell Agent. Your ONLY task is to provide a polite goodbye message. "
                "Use the 'say_goodbye' tool when the user indicates they are leaving or ending the conversation "
@@ -240,7 +310,6 @@ farewell_agent = Agent(
 generation_agent = Agent(
    # Can use the same or a different model
    model = "gemini-2.0-flash",
-   # model=LiteLlm(model=MODEL_GPT_4O), # If you would like to experiment with other models
    name="generation_agent",
    instruction="You are the documentation generation  Agent. Your task is to provide documentation for a specified issue. "
                "Use the 'generate_text' tool when the user indicates they want documentation or docs for a specified issue. "
@@ -249,12 +318,24 @@ generation_agent = Agent(
    tools=[generate_text, load_artifacts],
 )
 
-   # @title Define the Root Agent with Sub-Agents
+ # --- Docs Evaluator Agent ---
+evaluation_agent = Agent(
+   # Can use the same or a different model
+   model = "gemini-2.0-flash",
+   name="evaluation_agent",
+   instruction="You are the documentation evaluation Agent. Your task is to evaluate documentation for a specified issue. "
+               "Use the 'evaluate_text' tool when the user indicates they want  documentation or docs to be evaluated for a specified issue. "
+               "Do not perform any other actions.",
+   description="Evaluates documents using the 'evaluate_text' tool.", # Crucial for delegation
+   tools=[evaluate_text, load_artifacts],
+)
 
+
+   # @title Define the Root Agent with Sub-Agents
 root_agent = Agent(
-   name="infoport_agent_v2", # Give it a new version name
+   name="infoport_supervisor_agent_v2", # Give it a new version name
    model="gemini-2.0-flash",
-   description="The main coordinator agent. Handles github issues requests and delegates greetings/farewells/generation and evlauation to specialists.",
+   description="The main Supervisor Agent. Its primary responsibility is to understand user intent and delegate requests to the appropriate specialized sub-agents.",
    instruction="You are the main Supervisor Agent coordinating a team. Your primary responsibility is to provide weather information. "
                "Use the 'get_weather' tool ONLY for specific weather requests (e.g., 'weather in London'). "
                "You have specialized sub-agents: "
@@ -265,9 +346,9 @@ root_agent = Agent(
                "If it is a documentation request to create or generate docs, delegate to 'generation_agent'. "
                "If it's a weather request, handle it yourself using 'get_weather'. "
                "For anything else, respond appropriately or state you cannot handle it.",
-   tools=[get_weather], # Root agent still needs the weather tool for its core task
-   # Key change: Link the sub-agents here!
-   sub_agents=[greeting_agent, farewell_agent, generation_agent]
+   tools=[], # A pure supervisor agent delegates all tasks and thus doesn't need its own tools
+  
+   sub_agents=[greeting_agent, farewell_agent, generation_agent, evaluation_agent]
 )
 
 
